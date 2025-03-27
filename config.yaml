@@ -1,0 +1,24 @@
+# Server 配置
+server:
+  listen_on: ":8080"  # 服务器监听地址和端口
+  token: "q4s-ska-85a-m02"  # 服务器访问 Token
+
+# GitLab 配置
+gitlab:
+  token: "KxDG6tsQtwKa4VkDSMuV"  # GitLab API 访问 Token
+
+# 仓库配置
+storage:
+  repo_path: "./repos"  # 仓库存放地址
+  db_path: "./codeql_dbs"
+
+
+# CodeQL 配置
+codeql:
+  path: "E:/Tools/codeql/codeql"  # CodeQL 执行文件路径（为空时自动下载）
+
+# 支持的语言
+supported_languages:
+  - Java
+  - Python
+  - Go

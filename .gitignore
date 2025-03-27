@@ -1,0 +1,4 @@
+.DS_Store
+codeql_dbs/**
+repos/**
+**/*.exe
