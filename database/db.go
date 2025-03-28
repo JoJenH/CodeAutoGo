@@ -13,13 +13,19 @@ import (
 var client *mongo.Client
 var db *mongo.Database
 
-func ConnectDB(mongoURI, dbName string) {
+func ConnectDB(mongoURI, dbName, username, password string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// 设置认证信息
+	credential := options.Credential{
+		Username: username,
+		Password: password,
+	}
+
 	// 连接 MongoDB
 	var err error
-	client, err = mongo.Connect(ctx, options.Client().ApplyURI(mongoURI))
+	client, err = mongo.Connect(ctx, options.Client().ApplyURI(mongoURI).SetAuth(credential))
 	if err != nil {
 		log.Fatal("数据库连接失败:", err)
 	}

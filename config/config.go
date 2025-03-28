@@ -15,6 +15,8 @@ type Config struct {
 	Database struct {
 		MongoURI string `yaml:"mongo_uri"`
 		DBName   string `yaml:"db_name"`
+		Username string `yaml:"username"`
+		Password string `yaml:"password"`
 	} `yaml:"database"`
 	GitLab struct {
 		Token string `yaml:"token"`
@@ -43,17 +45,6 @@ func LoadConfig() (*Config, error) {
 	yamlDecoder := yaml.NewDecoder(file)
 	if err := yamlDecoder.Decode(&config); err != nil {
 		return nil, fmt.Errorf("配置文件解析失败: %v", err)
-	}
-
-	// 检查必要配置项
-	if config.Server.ListenOn == "" {
-		return nil, fmt.Errorf("server.listen_on 配置项不能为空")
-	}
-	if config.Server.Token == "" {
-		return nil, fmt.Errorf("server.token 配置项不能为空")
-	}
-	if config.GitLab.Token == "" {
-		return nil, fmt.Errorf("gitlab.token 配置项不能为空")
 	}
 
 	return config, nil

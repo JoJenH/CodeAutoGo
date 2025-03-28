@@ -28,7 +28,7 @@ func main() {
 		TaskStatus:   sync.Map{},
 	}
 
-	database.ConnectDB(appConfig.Database.MongoURI, appConfig.Database.DBName)
+	database.ConnectDB(appConfig.Database.MongoURI, appConfig.Database.DBName, appConfig.Database.Username, appConfig.Database.Password)
 	defer database.DisconnectDB()
 
 	r := gin.Default()
@@ -52,6 +52,7 @@ func main() {
 		api.CloneHandler(c, appContext)
 	})
 	r.Static("/static", "./static")
+	r.Static("/static/codeql_dbs", "./codeql_dbs")
 
 	r.Run() // 运行服务
 }

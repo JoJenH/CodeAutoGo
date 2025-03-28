@@ -7,6 +7,8 @@ server:
 database:
   mongo_url: "mongodb://localhost:27017"  # MongoDB 连接地址
   mongo_db: "codeautogo"  # MongoDB 数据库名称
+  username: ""
+  password: ""
 
 
 # GitLab 配置
