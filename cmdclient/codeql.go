@@ -1,4 +1,4 @@
-package utils
+package cmdclient
 
 import (
 	"bufio"
@@ -12,14 +12,22 @@ import (
 	"sync"
 )
 
-type Task struct {
-	Status   string  `json:"status"`
-	Progress float32 `json:"progress"`
-	Error    string  `json:"error,omitempty"`
+type CodeQLClient struct {
+	codeqlPath   string
+	codeqlDBPath string
+	repoPath     string
 }
 
-func CreateCodeQLDatabase(project, language string) error {
-	dbPath := fmt.Sprintf("%s/%s", Config.Storage.CodeqlDBPath, project)
+func NewCodeQLClient(codeqlPath, codeqlDBPath, repoPath string) *CodeQLClient {
+	return &CodeQLClient{
+		codeqlPath:   codeqlPath,
+		codeqlDBPath: codeqlDBPath,
+		repoPath:     repoPath,
+	}
+}
+
+func (c *CodeQLClient) CreateCodeQLDatabase(project, language string) error {
+	dbPath := fmt.Sprintf("%s/%s", c.codeqlDBPath, project)
 	// 检查文件夹是否存在
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		os.MkdirAll(dbPath, 0755)
@@ -27,9 +35,9 @@ func CreateCodeQLDatabase(project, language string) error {
 	}
 
 	db := fmt.Sprintf("%s/codeql_db", dbPath)
-	repoPath := fmt.Sprintf("%s/%s", Config.Storage.RepoPath, project)
+	repoPath := fmt.Sprintf("%s/%s", c.repoPath, project)
 	log.Printf("[INFO] 创建 CodeQL 数据库")
-	output, err := exec.Command(Config.CodeQL.Path, "database", "create", "--overwrite", "--language", strings.ToLower(language), "--source-root", repoPath, db).CombinedOutput()
+	output, err := exec.Command(c.codeqlPath, "database", "create", "--overwrite", "--language", strings.ToLower(language), "--source-root", repoPath, db).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("创建 CodeQL 数据库失败: %v\n%s", err, string(output))
 	}
@@ -51,11 +59,11 @@ func parseProgress(line, status string, re *regexp.Regexp, project string, taskS
 	}
 }
 
-func AnalyzeCodeQLDatabase(project string, taskStatus *sync.Map) error {
-	db := fmt.Sprintf("%s/%s/codeql_db", Config.Storage.CodeqlDBPath, project)
-	result := fmt.Sprintf("%s/%s/codeql_result.sarif", Config.Storage.RepoPath, project)
+func (c *CodeQLClient) AnalyzeCodeQLDatabase(project string, taskStatus *sync.Map) error {
+	db := fmt.Sprintf("%s/%s/codeql_db", c.codeqlDBPath, project)
+	result := fmt.Sprintf("%s/%s/codeql_result.sarif", c.repoPath, project)
 
-	cmd := exec.Command(Config.CodeQL.Path, "database", "analyze", db, "--format=sarifv2.1.0", "--output", result)
+	cmd := exec.Command(c.codeqlPath, "database", "analyze", db, "--format=sarifv2.1.0", "--output", result)
 
 	cmd.Stdout = cmd.Stderr
 	stderrPipe, err := cmd.StderrPipe()

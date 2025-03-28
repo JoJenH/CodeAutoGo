@@ -1,18 +1,38 @@
-package main
+package api
 
 import (
-	"CodeAutoGo/utils"
 	"log"
 	"net/http"
 	"strings"
 	"sync"
 
+	"CodeAutoGo/appcontext"
+	"CodeAutoGo/cmdclient"
+	"CodeAutoGo/models"
+	"CodeAutoGo/repository"
+
 	"github.com/gin-gonic/gin"
 )
 
-var taskStatus sync.Map
+func finished(project string, taskStatus *sync.Map) {
+	repository.SaveTaskStatus(models.Task{
+		ProjectName: project,
+		Status:      "finished",
+		Content:     "任务已完成",
+	})
+	taskStatus.Delete(project)
+}
 
-func AuthMiddleware() gin.HandlerFunc {
+func failed(project string, taskStatus *sync.Map, err error) {
+	repository.SaveTaskStatus(models.Task{
+		ProjectName: project,
+		Status:      "failed",
+		Content:     "任务失败: " + err.Error(),
+	})
+	taskStatus.Delete(project)
+}
+
+func AuthMiddleware(ac *appcontext.AppContext) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 在这里实现你的权限校验逻辑
 		// 例如，从请求头中获取 token 并验证
@@ -24,7 +44,7 @@ func AuthMiddleware() gin.HandlerFunc {
 		}
 
 		// 假设 validateToken 是一个验证 token 的函数
-		if token != utils.Config.Server.Token {
+		if token != ac.Config.Server.Token {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized, invalid token"})
 			c.Abort()
 			return
@@ -35,7 +55,7 @@ func AuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-func ScanHandler(c *gin.Context) {
+func ScanHandler(c *gin.Context, ac *appcontext.AppContext) {
 	var request struct {
 		RepoURL string `json:"repo_url"`
 		Branch  string `json:"branch"`
@@ -49,70 +69,51 @@ func ScanHandler(c *gin.Context) {
 	go func() {
 		// Step1: Clone Repo
 		log.Printf("[INFO] 准备克隆项目代码")
-		project, err := utils.CloneRepo(request.RepoURL, request.Branch)
+		project, err := ac.GitClient.CloneRepo(request.RepoURL, request.Branch)
 		if err != nil {
 			log.Printf("[ERROR] 克隆项目代码失败: %v", err)
-			taskStatus.Store(project, utils.Task{
-				Status:   "failed",
-				Progress: -1,
-				Error:    err.Error(),
-			})
+			failed(project, &ac.TaskStatus, err)
 			return
 		}
 
 		// Step2: Get Language
 		log.Printf("[INFO] 准备获取项目主要语言")
-		language, err := utils.GetProjectLanguage(request.RepoURL)
+		language, err := ac.GitClient.GetProjectLanguage(request.RepoURL)
 		if err != nil {
 			log.Printf("[ERROR] 获取项目主要语言失败: %v", err)
-			taskStatus.Store(project, utils.Task{
-				Status:   "failed",
-				Progress: -1,
-				Error:    err.Error(),
-			})
+			failed(project, &ac.TaskStatus, err)
 			return
 		}
 
 		// Step3: Create CodeQL Database
 		log.Printf("[INFO] 准备创建 CodeQL 数据库")
-		taskStatus.Store(project, utils.Task{
+		ac.TaskStatus.Store(project, cmdclient.Task{
 			Status:   "building",
 			Progress: 0,
 		})
-		if err := utils.CreateCodeQLDatabase(project, language); err != nil {
+		if err := ac.CodeQLClient.CreateCodeQLDatabase(project, language); err != nil {
 			log.Printf("[ERROR] 创建 CodeQL 数据库失败: %v", err)
-			taskStatus.Store(project, utils.Task{
-				Status:   "failed",
-				Progress: -1,
-				Error:    err.Error(),
-			})
+			failed(project, &ac.TaskStatus, err)
 			return
 		}
 
 		// Step4: Run CodeQL Analyze
 		log.Printf("[INFO] 准备运行 CodeQL 分析")
-		if err := utils.AnalyzeCodeQLDatabase(project, &taskStatus); err != nil {
+		if err := ac.CodeQLClient.AnalyzeCodeQLDatabase(project, &ac.TaskStatus); err != nil {
 			log.Printf("[ERROR] 运行 CodeQL 分析失败: %v", err)
-			taskStatus.Store(project, utils.Task{
-				Status:   "failed",
-				Progress: -1,
-				Error:    err.Error(),
-			})
+			failed(project, &ac.TaskStatus, err)
 			return
 		}
 
 		// Step5: 完成任务
-		taskStatus.Store(project, utils.Task{
-			Status:   "finished",
-			Progress: 100,
-		})
+		finished(project, &ac.TaskStatus)
 	}()
 
 	// 立即响应客户端
 	c.JSON(202, gin.H{"message": "Scan request accepted, processing in background"})
 }
 
-func BuildHandler(c *gin.Context) {
+func BuildHandler(c *gin.Context, ac *appcontext.AppContext) {
 	var request struct {
 		Project  string `json:"project"`
 		Language string `json:"language"`
@@ -126,23 +127,16 @@ func BuildHandler(c *gin.Context) {
 	go func() {
 
 		log.Printf("[INFO] 准备创建 CodeQL 数据库")
-		taskStatus.Store(request.Project, utils.Task{
+		ac.TaskStatus.Store(request.Project, cmdclient.Task{
 			Status:   "building",
 			Progress: 0,
 		})
-		if err := utils.CreateCodeQLDatabase(request.Project, request.Language); err != nil {
+		if err := ac.CodeQLClient.CreateCodeQLDatabase(request.Project, request.Language); err != nil {
 			log.Printf("[ERROR] 创建 CodeQL 数据库失败: %v", err)
-			taskStatus.Store(request.Project, utils.Task{
-				Status:   "failed",
-				Progress: -1,
-				Error:    err.Error(),
-			})
+			failed(request.Project, &ac.TaskStatus, err)
 			return
 		}
-		taskStatus.Store(request.Project, utils.Task{
-			Status:   "finished",
-			Progress: 100,
-		})
+		finished(request.Project, &ac.TaskStatus)
 	}()
 
 	// 立即响应客户端
@@ -150,7 +144,7 @@ func BuildHandler(c *gin.Context) {
 
 }
 
-func AnalyzeHandler(c *gin.Context) {
+func AnalyzeHandler(c *gin.Context, ac *appcontext.AppContext) {
 	var request struct {
 		Project string `json:"project"`
 	}
@@ -162,26 +156,19 @@ func AnalyzeHandler(c *gin.Context) {
 	// Step1: 异步处理
 	go func() {
 		log.Printf("[INFO] 准备运行 CodeQL 分析")
-		if err := utils.AnalyzeCodeQLDatabase(request.Project, &taskStatus); err != nil {
+		if err := ac.CodeQLClient.AnalyzeCodeQLDatabase(request.Project, &ac.TaskStatus); err != nil {
 			log.Printf("[ERROR] 运行 CodeQL 分析失败: %v", err)
-			taskStatus.Store(request.Project, utils.Task{
-				Status:   "failed",
-				Progress: -1,
-				Error:    err.Error(),
-			})
+			failed(request.Project, &ac.TaskStatus, err)
 			return
 		}
-		taskStatus.Store(request.Project, utils.Task{
-			Status:   "finished",
-			Progress: 100,
-		})
+		finished(request.Project, &ac.TaskStatus)
 	}()
 
 	// 立即响应客户端
 	c.JSON(202, gin.H{"message": "Analyze request accepted, processing in background"})
 }
 
-func CloneHandler(c *gin.Context) {
+func CloneHandler(c *gin.Context, ac *appcontext.AppContext) {
 	var request struct {
 		RepoURL string `json:"repo_url"`
 		Branch  string `json:"branch"`
@@ -195,35 +182,28 @@ func CloneHandler(c *gin.Context) {
 	go func() {
 		// Step1: Clone Repo
 		log.Printf("[INFO] 准备克隆项目代码")
-		project, err := utils.CloneRepo(request.RepoURL, request.Branch)
+		project, err := ac.GitClient.CloneRepo(request.RepoURL, request.Branch)
 		if err != nil {
 			log.Printf("[ERROR] 克隆项目代码失败: %v", err)
-			taskStatus.Store(project, utils.Task{
-				Status:   "failed",
-				Progress: -1,
-				Error:    err.Error(),
-			})
+			failed(project, &ac.TaskStatus, err)
 			return
 		}
 
-		taskStatus.Store(project, utils.Task{
-			Status:   "finished",
-			Progress: 100,
-		})
+		finished(project, &ac.TaskStatus)
 	}()
 
 	// 立即响应客户端
 	c.JSON(202, gin.H{"message": "Clone request accepted, processing in background"})
 }
 
-func StatusHandler(c *gin.Context) {
+func StatusHandler(c *gin.Context, ac *appcontext.AppContext) {
 	repoURL := c.Query("repo")
 	repoInfo := strings.SplitN(repoURL, "/", 4)
 	if len(repoInfo) != 4 {
 		c.JSON(400, gin.H{"error": "Invalid repo URL"})
 	}
 	project := repoInfo[3]
-	if status, ok := taskStatus.Load(project); ok {
+	if status, ok := ac.TaskStatus.Load(project); ok {
 		c.JSON(200, gin.H{"status": status})
 	} else {
 		c.JSON(404, gin.H{"error": "Task not found"})
